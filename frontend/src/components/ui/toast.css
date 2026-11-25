@@ -1,0 +1,41 @@
+[data-sonner-toaster] { z-index: 100000; }
+.bantai-toast[data-sonner-toast] {
+  --normal-bg: var(--ui-elevated);
+  --normal-border: var(--ui-divider);
+  --normal-text: var(--ui-primary);
+  transition-duration: 200ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  .bantai-toast[data-sonner-toast] { transition: none; animation: none; }
+}
+
+/* Use the current route theme instead of Sonner's fixed semantic palettes. */
+.bantai-toast[data-sonner-toast] {
+  background: var(--bg-surface);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+  --success-bg: var(--sem-success-bg);
+  --success-border: var(--sem-success-border);
+  --success-text: var(--sem-success-fg);
+  --error-bg: var(--sem-error-bg);
+  --error-border: var(--sem-error-border);
+  --error-text: var(--sem-error-fg);
+  --warning-bg: var(--sem-warning-bg);
+  --warning-border: var(--sem-warning-border);
+  --warning-text: var(--sem-warning-fg);
+}
+.bantai-toast [data-close-button] {
+  background: var(--bg-surface);
+  border-color: var(--border-strong);
+  color: var(--text-secondary);
+}
+
+.bantai-inbox-toast[data-sonner-toast] {
+  width: var(--width);
+  padding: 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 0.875rem;
+  color: var(--text-primary);
+  box-shadow: var(--shadow-card);
+}

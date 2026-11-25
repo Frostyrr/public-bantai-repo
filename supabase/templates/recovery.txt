@@ -1,0 +1,11 @@
+Bantai
+
+Reset your password
+
+We received a request to reset your Bantai password. Return to the Bantai page where you requested the reset and enter the full code below. Use the newest password reset email if you requested more than one code.
+
+Password reset code: {{ .Token }}
+This code expires in five minutes. Do not share this code with anyone.
+
+Bantai account security
+If you didn’t request a reset, ignore this email. This request does not change your password.

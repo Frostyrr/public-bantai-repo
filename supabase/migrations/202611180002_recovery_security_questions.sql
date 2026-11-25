@@ -1,0 +1,149 @@
+begin;
+
+create table bantai_private.security_questions (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  questions integer[] not null,
+  answers jsonb not null,
+  revision uuid not null default gen_random_uuid(),
+  attempts integer not null default 0,
+  window_at timestamptz not null default now(),
+  check (cardinality(questions) = 3)
+);
+create table bantai_private.security_question_challenges (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  session_id uuid not null references auth.sessions(id) on delete cascade,
+  digest text not null,
+  sent_at timestamptz not null default now(),
+  expires_at timestamptz not null default now() + interval '5 minutes',
+  attempts integer not null default 0
+);
+create table bantai_private.security_question_proofs (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  session_id uuid not null references auth.sessions(id) on delete cascade,
+  kind text not null check (kind in ('manage','recovery')),
+  revision uuid,
+  expires_at timestamptz not null default now() + interval '5 minutes',
+  primary key (user_id, session_id, kind)
+);
+create table bantai_private.security_question_password_tickets (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  digest text not null,
+  expires_at timestamptz not null default now() + interval '30 seconds'
+);
+alter table bantai_private.security_questions enable row level security;
+alter table bantai_private.security_question_challenges enable row level security;
+alter table bantai_private.security_question_proofs enable row level security;
+alter table bantai_private.security_question_password_tickets enable row level security;
+revoke all on bantai_private.security_questions, bantai_private.security_question_challenges,
+  bantai_private.security_question_proofs, bantai_private.security_question_password_tickets from public, anon, authenticated;
+
+-- All callers are server-authenticated before invoking this service-only API.
+create function public.bantai_sq_action(p_user uuid, p_session uuid, p_aal text, p_action text, p_data jsonb default '{}')
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare q bantai_private.security_questions; c bantai_private.security_question_challenges;
+  ids integer[]; changed integer;
+begin
+  if not exists(select 1 from auth.sessions where id=p_session and user_id=p_user)
+     or bantai_private.session_decision(p_session,p_user) is distinct from 'active'
+     or (p_action<>'status' and exists(select 1 from auth.mfa_factors where user_id=p_user and status='verified' and factor_type='totp') and p_aal is distinct from 'aal2')
+  then raise exception 'Verification required'; end if;
+  -- Serialize changes and verification attempts for this account, across sessions.
+  perform pg_advisory_xact_lock(hashtextextended(p_user::text, 8731));
+  delete from bantai_private.security_question_proofs where user_id=p_user and expires_at<=now();
+  delete from bantai_private.security_question_password_tickets where user_id=p_user and expires_at<=now();
+  select * into q from bantai_private.security_questions where user_id=p_user for update;
+  if p_action='status' then
+    return jsonb_build_object('enabled', q.user_id is not null, 'questions', coalesce(to_jsonb(q.questions),'[]'::jsonb));
+  elsif p_action='send' then
+    select * into c from bantai_private.security_question_challenges where user_id=p_user for update;
+    if c.sent_at > now()-interval '60 seconds' then return jsonb_build_object('limited',true); end if;
+    insert into bantai_private.security_question_challenges(user_id,session_id,digest)
+      values(p_user,p_session,p_data->>'digest') on conflict(user_id) do update
+      set session_id=excluded.session_id,digest=excluded.digest,sent_at=now(),expires_at=now()+interval '5 minutes',attempts=0;
+    delete from bantai_private.security_question_proofs where user_id=p_user and kind='manage';
+    return '{"ok":true}';
+  elsif p_action='confirm' then
+    select * into c from bantai_private.security_question_challenges where user_id=p_user for update;
+    if c.user_id is null or c.session_id<>p_session or c.expires_at<=now() or c.attempts>=5 then return '{"ok":false}'; end if;
+    update bantai_private.security_question_challenges set attempts=attempts+1 where user_id=p_user;
+    if c.digest is distinct from p_data->>'digest' then return '{"ok":false}'; end if;
+    delete from bantai_private.security_question_challenges where user_id=p_user;
+    insert into bantai_private.security_question_proofs(user_id,session_id,kind) values(p_user,p_session,'manage')
+      on conflict(user_id,session_id,kind) do update set expires_at=now()+interval '5 minutes';
+    return '{"ok":true}';
+  elsif p_action in ('save','disable') then
+    delete from bantai_private.security_question_proofs where user_id=p_user and session_id=p_session and kind='manage' and expires_at>now();
+    get diagnostics changed=row_count;
+    if changed<>1 then raise exception 'Verify a fresh email code first'; end if;
+    if p_action='save' then
+      select array_agg(v::integer) into ids from jsonb_array_elements_text(p_data->'questions') v;
+      if cardinality(ids)<>3 or (select count(distinct v) from unnest(ids) v)<>3
+        or exists(select 1 from unnest(ids) v where v<1 or v>8)
+        or jsonb_array_length(p_data->'answers')<>3 then raise exception 'Choose three distinct questions'; end if;
+      insert into bantai_private.security_questions(user_id,questions,answers) values(p_user,ids,p_data->'answers')
+        on conflict(user_id) do update set questions=excluded.questions,answers=excluded.answers,revision=gen_random_uuid(),attempts=0,window_at=now();
+    else
+      delete from bantai_private.security_questions where user_id=p_user;
+    end if;
+    delete from bantai_private.security_question_proofs where user_id=p_user;
+    delete from bantai_private.security_question_password_tickets where user_id=p_user;
+    -- Queued change notice contains no question or answer data.
+    insert into public.notification_delivery_queue(recipient_user_id,channel,notification_type,title,message,metadata)
+      values(p_user,'email','security.auth_alert','Your Bantai recovery questions were changed',
+        case when p_action='disable' then 'Recovery questions were disabled.' else 'Recovery questions were updated.' end,
+        jsonb_build_object('occurred_at',now()));
+    return '{"ok":true}';
+  elsif p_action='attempt' then
+    if q.user_id is null then return '{"enabled":false}'; end if;
+    if q.window_at<=now()-interval '15 minutes' then
+      update bantai_private.security_questions set attempts=0,window_at=now() where user_id=p_user;
+      q.attempts=0;
+    end if;
+    if q.attempts>=5 then return '{"limited":true}'; end if;
+    update bantai_private.security_questions set attempts=attempts+1 where user_id=p_user;
+    return jsonb_build_object('enabled',true,'answers',q.answers,'revision',q.revision);
+  elsif p_action='prove' then
+    if q.user_id is null or q.revision::text is distinct from p_data->>'revision' then return '{"ok":false}'; end if;
+    insert into bantai_private.security_question_proofs(user_id,session_id,kind,revision) values(p_user,p_session,'recovery',q.revision)
+      on conflict(user_id,session_id,kind) do update set revision=excluded.revision,expires_at=now()+interval '5 minutes';
+    return '{"ok":true}';
+  elsif p_action='ticket' then
+    if q.user_id is not null then
+      delete from bantai_private.security_question_proofs where user_id=p_user and session_id=p_session
+        and kind='recovery' and revision=q.revision and expires_at>now();
+      get diagnostics changed=row_count;
+      if changed<>1 then raise exception 'Answer your recovery questions first'; end if;
+    end if;
+    insert into bantai_private.security_question_password_tickets(user_id,digest) values(p_user,p_data->>'digest')
+      on conflict(user_id) do update set digest=excluded.digest,expires_at=now()+interval '30 seconds';
+    return '{"ok":true}';
+  end if;
+  raise exception 'Unsupported action';
+end;
+$$;
+revoke all on function public.bantai_sq_action(uuid,uuid,text,text,jsonb) from public,anon,authenticated;
+grant execute on function public.bantai_sq_action(uuid,uuid,text,text,jsonb) to service_role;
+
+-- GoTrue updates passwords before app_metadata inside one transaction. Check the
+-- final row at COMMIT, consume the server-only ticket, then erase its marker.
+-- Users cannot write app_metadata, and raw_user_meta_data is deliberately ignored.
+create function bantai_private.enforce_security_question_password()
+returns trigger language plpgsql security definer set search_path='' as $$
+declare marker text; consumed integer;
+begin
+  select raw_app_meta_data->>'bantai_sq_ticket' into marker from auth.users where id=new.id;
+  if marker is null and not exists(select 1 from bantai_private.security_questions where user_id=new.id) then return null; end if;
+  delete from bantai_private.security_question_password_tickets where user_id=new.id
+    and digest=md5(marker) and expires_at>now();
+  get diagnostics consumed=row_count;
+  if consumed<>1 then raise exception 'Use Bantai account recovery to change this password'; end if;
+  update auth.users set raw_app_meta_data=raw_app_meta_data-'bantai_sq_ticket' where id=new.id;
+  return null;
+end;
+$$;
+revoke all on function bantai_private.enforce_security_question_password() from public,anon,authenticated;
+create constraint trigger enforce_security_question_password after update of encrypted_password on auth.users
+  deferrable initially deferred for each row
+  when (old.encrypted_password is distinct from new.encrypted_password)
+  execute function bantai_private.enforce_security_question_password();
+commit;

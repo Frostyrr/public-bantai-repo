@@ -1,0 +1,11 @@
+Bantai
+
+Verify your password change
+
+Enter this verification code in Bantai Account Settings to continue changing your password.
+
+Verification code: {{ .Token }}
+Do not share this code with anyone.
+
+Bantai account security
+If you didn’t request this code, ignore this email and review your account security by opening Bantai directly.

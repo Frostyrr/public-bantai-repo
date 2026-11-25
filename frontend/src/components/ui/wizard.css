@@ -1,0 +1,14 @@
+.wizard-dialog {
+  --wizard-step-ms: 220;
+  --wizard-progress-duration: 250ms;
+}
+
+.wizard-segment {
+  transition: background-color var(--wizard-progress-duration) ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wizard-segment {
+    transition: none;
+  }
+}

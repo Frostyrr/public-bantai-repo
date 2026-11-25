@@ -1,0 +1,11 @@
+Bantai
+
+Confirm your email address change
+
+Someone requested an email address change for your Bantai account. If that was you, confirm the change in the browser where you requested it. If you received a confirmation in both inboxes, open both links.
+
+Confirm email address change: {{ .ConfirmationURL }}
+If the button doesn’t work, open the confirmation link in the same browser.
+
+Bantai account security
+If you didn’t request this change, ignore this email and review your account security by opening Bantai directly.

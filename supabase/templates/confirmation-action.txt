@@ -1,0 +1,14 @@
+Bantai
+
+Confirm your email address
+
+Enter this six-digit code in Bantai to verify your email and finish creating your account.
+
+Verification code: {{ .Token }}
+This code expires in five minutes. Do not share this code with anyone.
+
+Confirm your email address: {{ .SiteURL }}/email/verify
+Enter your email address and code on the verification page.
+
+Bantai account security
+If you didn’t create a Bantai account, you can ignore this email.
