@@ -1,7 +1,6 @@
 -- =============================================================================
--- Bantai — Sanitized Security Schema & Synthetic Test Data Dump
+-- Bantai — Database Dump
 -- Course: IT 107 · Information Assurance and Security 1
--- Engine: PostgreSQL 15+ (Supabase compatible)
 --
 -- Covers all 7 required security tables with >= 5 synthetic test records each:
 --   1. public.profiles                       (users)
