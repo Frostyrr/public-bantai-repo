@@ -4,7 +4,7 @@ export const personName = z
   .string()
   .trim()
   .min(1)
-  .max(100)
+  .max(50)
   .refine(
     (value) => /\p{L}/u.test(value) && !/[\p{Cc}<>]/u.test(value),
     "Enter a name without control characters or angle brackets.",

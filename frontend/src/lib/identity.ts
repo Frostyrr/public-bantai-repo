@@ -30,7 +30,7 @@ export function identityError(identity: PersonalIdentity) {
   const validName = (value: string | null) =>
     Boolean(
       value?.trim() &&
-      value.trim().length <= 100 &&
+      value.trim().length <= 50 &&
       /\p{L}/u.test(value) &&
       !/[\p{Cc}<>]/u.test(value),
     );
